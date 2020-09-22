@@ -1,0 +1,64 @@
+name: Imitator workflow
+
+on:
+  - push
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+        ocaml-version:
+          - 4.05.0
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Imitator code
+        uses: actions/checkout@v2
+
+      - name: Use OCaml ${{ matrix.ocaml-version }}
+        uses: avsm/setup-ocaml@v1
+        with:
+          ocaml-version: ${{ matrix.ocaml-version }}
+
+      - name: Set environment variables
+        run: |
+          eval $(opam env)
+          echo "::set-env name=OPAM_PREFIX::$(opam config var prefix)"
+          echo "::set-env name=OPAM_LIB_PATH::$(opam config var lib)"
+          echo "::add-path::$(opam config var bin)"
+
+      - name: Install GNU/Linux dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -yq wget unzip curl build-essential g++ m4 libgmp-dev libmpfr-dev libppl-dev graphviz plotutils
+
+      - name: Cache opam
+        uses: actions/cache@v2
+        with:
+          path: ${OPAM_PREFIX}
+          key: ${{ runner.os }}-${{ matrix.ocaml-version }}
+
+      - name: Install Ocaml dependencies
+        env:
+          PPL_VERSION: 1.2
+        run: |
+          opam install ocamlfind ocamlbuild oasis extlib fileutils mlgmp
+
+          if [[ ! -d "${OPAM_LIB_PATH}/ppl" ]]; then
+            wget -q --no-check-certificate https://www.bugseng.com/products/ppl/download/ftp/releases/${PPL_VERSION}/ppl-${PPL_VERSION}.zip
+            unzip -qq ppl-${PPL_VERSION}.zip
+            (cd ppl-${PPL_VERSION}; ./configure --prefix=${OPAM_PREFIX} --with-mlgmp=${OPAM_LIB_PATH}/gmp; cd interfaces/OCaml; make -j 4; sudo make install)
+            rm -rf ppl-${PPL_VERSION}*
+
+
+            sudo mv METAS/META.ppl ${OPAM_LIB_PATH}/ppl/META
+            sudo sed -i '/directory=/d' ${OPAM_LIB_PATH}/ppl/META
+          fi
+
+      - name: Build imitator
+        run: |
+          echo $PATH
+          ./build.sh
